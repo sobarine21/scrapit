@@ -1,6 +1,5 @@
 import os
 import time
-import csv
 import base64
 import random
 import pandas as pd
@@ -9,9 +8,6 @@ from queue import Queue
 from threading import Thread, Lock
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from google import genai
 from google.genai import types
 
@@ -19,13 +15,15 @@ from google.genai import types
 
 MAX_URLS_PER_KEY = 3
 MAX_CONCURRENT_REQUESTS = 15
-API_KEYS = st.secrets["GEMINI_API_KEYS"]  # List of API keys from Streamlit secrets
+API_KEYS = st.secrets["GEMINI"]["GEMINI_API_KEYS"]
 lock = Lock()
 
-# ---- Gemini API Generation ----
+# ---- Gemini API Content Generation ----
 
 def generate_ai_insights(prompt, api_key):
+    os.environ["GEMINI_API_KEY"] = api_key
     client = genai.Client(api_key=api_key)
+
     model = "gemini-2.5-flash-lite"
 
     contents = [
@@ -35,7 +33,7 @@ def generate_ai_insights(prompt, api_key):
         )
     ]
 
-    config = types.GenerateContentConfig(
+    generate_content_config = types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(thinking_budget=0),
         safety_settings=[
             types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_LOW_AND_ABOVE"),
@@ -49,12 +47,13 @@ def generate_ai_insights(prompt, api_key):
     for chunk in client.models.generate_content_stream(
         model=model,
         contents=contents,
-        config=config,
+        config=generate_content_config,
     ):
         output += chunk.text
+
     return output.strip()
 
-# ---- Selenium Scraper ----
+# ---- Selenium Setup ----
 
 def setup_selenium():
     chrome_options = Options()
@@ -64,7 +63,7 @@ def setup_selenium():
     driver = webdriver.Chrome(options=chrome_options)
     return driver
 
-# ---- Worker Thread ----
+# ---- Worker Thread Function ----
 
 def process_url(task_queue, result_list, knowledge_text, key_rotation):
     while not task_queue.empty():
@@ -76,11 +75,12 @@ def process_url(task_queue, result_list, knowledge_text, key_rotation):
         try:
             driver = setup_selenium()
             driver.get(url)
-            time.sleep(3)  # Allow time for page to load
+            time.sleep(3)  # Allow full page load
 
             page_source = driver.page_source
 
-            prompt = f"""Using the knowledge base below, extract relevant regulatory enforcement or actions data from the following webpage content:\n
+            prompt = f"""Based on the knowledge base provided, extract relevant regulatory enforcement or actions data from the webpage content below.
+
 Knowledge Base:
 {knowledge_text}
 
@@ -88,7 +88,7 @@ Page Content:
 {page_source}
 """
 
-            # Rotate API key
+            # Rotate API key safely
             with lock:
                 api_key = key_rotation.pop(0)
                 key_rotation.append(api_key)
@@ -113,9 +113,9 @@ Page Content:
 # ---- Streamlit Interface ----
 
 def main():
-    st.title("AI-Powered Regulatory Data Collector")
+    st.title("AI-Powered Regulatory Data Scraper")
 
-    uploaded_csv = st.file_uploader("Upload CSV with URLs (column name: 'url')", type=["csv"])
+    uploaded_csv = st.file_uploader("Upload CSV (column name: 'url')", type=["csv"])
     knowledge_file = st.file_uploader("Upload Knowledge Base Text File", type=["txt"])
 
     if uploaded_csv and knowledge_file:
@@ -123,22 +123,19 @@ def main():
         knowledge_text = knowledge_file.read().decode("utf-8")
 
         if "url" not in urls_df.columns:
-            st.error("CSV must contain 'url' column.")
+            st.error("CSV must have a column named 'url'.")
             return
 
         urls = urls_df["url"].dropna().tolist()
-        st.write(f"Total URLs to process: {len(urls)}")
+        st.info(f"Total URLs to process: {len(urls)}")
 
         if st.button("Start Processing"):
-
             result_list = []
             task_queue = Queue()
 
-            # Enqueue URLs
             for url in urls:
                 task_queue.put(url)
 
-            # Prepare API key rotation
             key_rotation = API_KEYS.copy()
 
             threads = []
@@ -152,14 +149,16 @@ def main():
             for t in threads:
                 t.join()
 
-            # Display and Save Results
             result_df = pd.DataFrame(result_list)
             st.dataframe(result_df)
 
             csv_data = result_df.to_csv(index=False)
             b64 = base64.b64encode(csv_data.encode()).decode()
 
-            st.markdown(f'<a href="data:file/csv;base64,{b64}" download="extracted_data.csv">Download Results as CSV</a>', unsafe_allow_html=True)
+            st.markdown(
+                f'<a href="data:file/csv;base64,{b64}" download="extracted_data.csv">⬇️ Download Results as CSV</a>',
+                unsafe_allow_html=True
+            )
 
 if __name__ == "__main__":
     main()
