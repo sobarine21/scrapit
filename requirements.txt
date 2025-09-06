@@ -1,4 +1,4 @@
 streamlit
 pandas
 selenium
-google-generativeai
+google-genai
