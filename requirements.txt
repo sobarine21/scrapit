@@ -1,6 +1,3 @@
 streamlit
+psycopg2-binary
 pandas
-selenium
-google-genai
-webdriver_manager
-bs4
