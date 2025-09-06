@@ -2,13 +2,10 @@ import os
 import time
 import base64
 import pandas as pd
+import requests
 import streamlit as st
 from queue import Queue
 from threading import Thread, Lock
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from google import genai
 from google.genai import types
 
@@ -53,19 +50,6 @@ def generate_ai_code(prompt, api_key):
 
     return output.strip()
 
-# ---- Selenium Setup ----
-
-def setup_selenium():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    return driver
-
 # ---- Worker Thread Function ----
 
 def process_url(task_queue, result_list, knowledge_text, key_rotation):
@@ -75,14 +59,11 @@ def process_url(task_queue, result_list, knowledge_text, key_rotation):
             task_queue.task_done()
             continue
 
-        driver = None
-
         try:
-            # Step 1: Visit URL and extract page source
-            driver = setup_selenium()
-            driver.get(url)
-            time.sleep(3)  # Allow full page load
-            page_source = driver.page_source
+            # Step 1: Fetch page content using requests
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            page_source = response.text
 
             # Step 2: Generate Python scraping script dynamically
             prompt = f"""Based on the following knowledge base and webpage HTML content, generate a Python function called 'scrape_page(html_content)' that extracts relevant regulatory enforcement or actions data in structured dict format.
@@ -97,6 +78,7 @@ Provide only the Python function code without explanations.
 Example expected output: {{'enforcement_title': '...', 'date': '...', 'details': '...'}}
 """
 
+            # Rotate API key safely
             with lock:
                 api_key = key_rotation.pop(0)
                 key_rotation.append(api_key)
@@ -126,16 +108,14 @@ Example expected output: {{'enforcement_title': '...', 'date': '...', 'details':
             })
 
         finally:
-            if driver:
-                driver.quit()
             task_queue.task_done()
 
 # ---- Streamlit App Interface ----
 
 def main():
-    st.title("AI-Powered Regulatory Data Scraper with Dynamic Script Generation")
+    st.title("AI-Powered Regulatory Data Scraper")
 
-    uploaded_csv = st.file_uploader("Upload CSV (must contain column 'url')", type=["csv"])
+    uploaded_csv = st.file_uploader("Upload CSV file (must contain column 'url')", type=["csv"])
     knowledge_file = st.file_uploader("Upload Knowledge Base Text File (.txt)", type=["txt"])
 
     if uploaded_csv and knowledge_file:
@@ -143,7 +123,7 @@ def main():
         knowledge_text = knowledge_file.read().decode("utf-8")
 
         if "url" not in urls_df.columns:
-            st.error("CSV must contain a column named 'url'.")
+            st.error("CSV file must contain a column named 'url'.")
             return
 
         urls = urls_df["url"].dropna().tolist()
