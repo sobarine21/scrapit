@@ -3,6 +3,7 @@ import time
 import base64
 import pandas as pd
 import requests
+import re
 import streamlit as st
 from queue import Queue
 from threading import Thread, Lock
@@ -60,12 +61,12 @@ def process_url(task_queue, result_list, knowledge_text, key_rotation):
             continue
 
         try:
-            # Step 1: Fetch page content using requests
+            # Step 1: Fetch page content
             response = requests.get(url, timeout=15)
             response.raise_for_status()
             page_source = response.text
 
-            # Step 2: Generate Python scraping script dynamically
+            # Step 2: Generate dynamic scraping function
             prompt = f"""Based on the following knowledge base and webpage HTML content, generate a Python function called 'scrape_page(html_content)' that extracts relevant regulatory enforcement or actions data in structured dict format.
 
 Knowledge Base:
@@ -74,8 +75,7 @@ Knowledge Base:
 Page HTML Content:
 {page_source}
 
-Provide only the Python function code without explanations.
-Example expected output: {{'enforcement_title': '...', 'date': '...', 'details': '...'}}
+Provide only the Python function code without explanations or markdown. Example output: {{'enforcement_title': '...', 'date': '...', 'details': '...'}}
 """
 
             # Rotate API key safely
@@ -85,9 +85,12 @@ Example expected output: {{'enforcement_title': '...', 'date': '...', 'details':
 
             generated_code = generate_ai_code(prompt, api_key)
 
-            # Step 3: Safely execute the generated code
+            # Clean generated code from ``` markers
+            cleaned_code = re.sub(r"```(?:python)?", "", generated_code).strip()
+
+            # Step 3: Execute the generated function
             local_vars = {}
-            exec(generated_code, {}, local_vars)
+            exec(cleaned_code, {}, local_vars)
 
             if "scrape_page" not in local_vars:
                 raise Exception("AI did not generate 'scrape_page(html_content)' function.")
@@ -96,21 +99,21 @@ Example expected output: {{'enforcement_title': '...', 'date': '...', 'details':
 
             result_list.append({
                 "url": url,
-                "ai_generated_code": generated_code,
+                "ai_generated_code": cleaned_code,
                 "extracted_data": extracted_data
             })
 
         except Exception as e:
             result_list.append({
                 "url": url,
-                "ai_generated_code": generated_code if 'generated_code' in locals() else "N/A",
+                "ai_generated_code": cleaned_code if 'cleaned_code' in locals() else "N/A",
                 "extracted_data": f"ERROR: {str(e)}"
             })
 
         finally:
             task_queue.task_done()
 
-# ---- Streamlit App Interface ----
+# ---- Streamlit App ----
 
 def main():
     st.title("AI-Powered Regulatory Data Scraper")
