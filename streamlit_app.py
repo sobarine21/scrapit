@@ -7,6 +7,8 @@ from queue import Queue
 from threading import Thread, Lock
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from google import genai
 from google.genai import types
 
@@ -58,7 +60,10 @@ def setup_selenium():
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
-    driver = webdriver.Chrome(options=chrome_options)
+    chrome_options.add_argument("--disable-dev-shm-usage")
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
 
 # ---- Worker Thread Function ----
@@ -76,11 +81,11 @@ def process_url(task_queue, result_list, knowledge_text, key_rotation):
             # Step 1: Visit URL and extract page source
             driver = setup_selenium()
             driver.get(url)
-            time.sleep(3)
+            time.sleep(3)  # Allow full page load
             page_source = driver.page_source
 
             # Step 2: Generate Python scraping script dynamically
-            prompt = f"""Based on the following knowledge base and webpage HTML content, generate a Python function called 'scrape_page(html_content)' that extracts the relevant regulatory enforcement or actions data in structured dict format.
+            prompt = f"""Based on the following knowledge base and webpage HTML content, generate a Python function called 'scrape_page(html_content)' that extracts relevant regulatory enforcement or actions data in structured dict format.
 
 Knowledge Base:
 {knowledge_text}
@@ -98,12 +103,12 @@ Example expected output: {{'enforcement_title': '...', 'date': '...', 'details':
 
             generated_code = generate_ai_code(prompt, api_key)
 
-            # Step 3: Safely execute the generated code and call scrape_page(html_content)
+            # Step 3: Safely execute the generated code
             local_vars = {}
-            exec(generated_code, {}, local_vars)  # Run code in isolated namespace
+            exec(generated_code, {}, local_vars)
 
             if "scrape_page" not in local_vars:
-                raise Exception("Generated code did not provide 'scrape_page' function.")
+                raise Exception("AI did not generate 'scrape_page(html_content)' function.")
 
             extracted_data = local_vars["scrape_page"](page_source)
 
@@ -125,7 +130,7 @@ Example expected output: {{'enforcement_title': '...', 'date': '...', 'details':
                 driver.quit()
             task_queue.task_done()
 
-# ---- Streamlit Interface ----
+# ---- Streamlit App Interface ----
 
 def main():
     st.title("AI-Powered Regulatory Data Scraper with Dynamic Script Generation")
