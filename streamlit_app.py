@@ -18,7 +18,7 @@ lock = Lock()
 
 # ---- Gemini API Content Generation ----
 
-def generate_ai_insights(prompt, api_key):
+def generate_ai_code(prompt, api_key):
     os.environ["GEMINI_API_KEY"] = api_key
     client = genai.Client(api_key=api_key)
 
@@ -70,40 +70,54 @@ def process_url(task_queue, result_list, knowledge_text, key_rotation):
             task_queue.task_done()
             continue
 
-        driver = None  # Initialize driver to None
+        driver = None
 
         try:
+            # Step 1: Visit URL and extract page source
             driver = setup_selenium()
             driver.get(url)
-            time.sleep(3)  # Allow full page load
-
+            time.sleep(3)
             page_source = driver.page_source
 
-            prompt = f"""Based on the knowledge base provided, extract relevant regulatory enforcement or actions data from the webpage content below.
+            # Step 2: Generate Python scraping script dynamically
+            prompt = f"""Based on the following knowledge base and webpage HTML content, generate a Python function called 'scrape_page(html_content)' that extracts the relevant regulatory enforcement or actions data in structured dict format.
 
 Knowledge Base:
 {knowledge_text}
 
-Page Content:
+Page HTML Content:
 {page_source}
+
+Provide only the Python function code without explanations.
+Example expected output: {{'enforcement_title': '...', 'date': '...', 'details': '...'}}
 """
 
-            # Rotate API key safely
             with lock:
                 api_key = key_rotation.pop(0)
                 key_rotation.append(api_key)
 
-            ai_response = generate_ai_insights(prompt, api_key)
+            generated_code = generate_ai_code(prompt, api_key)
+
+            # Step 3: Safely execute the generated code and call scrape_page(html_content)
+            local_vars = {}
+            exec(generated_code, {}, local_vars)  # Run code in isolated namespace
+
+            if "scrape_page" not in local_vars:
+                raise Exception("Generated code did not provide 'scrape_page' function.")
+
+            extracted_data = local_vars["scrape_page"](page_source)
 
             result_list.append({
                 "url": url,
-                "ai_extracted_data": ai_response
+                "ai_generated_code": generated_code,
+                "extracted_data": extracted_data
             })
 
         except Exception as e:
             result_list.append({
                 "url": url,
-                "ai_extracted_data": f"ERROR: {str(e)}"
+                "ai_generated_code": generated_code if 'generated_code' in locals() else "N/A",
+                "extracted_data": f"ERROR: {str(e)}"
             })
 
         finally:
@@ -111,10 +125,10 @@ Page Content:
                 driver.quit()
             task_queue.task_done()
 
-# ---- Streamlit App Interface ----
+# ---- Streamlit Interface ----
 
 def main():
-    st.title("AI-Powered Regulatory Data Scraper")
+    st.title("AI-Powered Regulatory Data Scraper with Dynamic Script Generation")
 
     uploaded_csv = st.file_uploader("Upload CSV (must contain column 'url')", type=["csv"])
     knowledge_file = st.file_uploader("Upload Knowledge Base Text File (.txt)", type=["txt"])
@@ -131,7 +145,6 @@ def main():
         st.info(f"Total URLs to process: {len(urls)}")
 
         if st.button("Start Processing"):
-
             result_list = []
             task_queue = Queue()
 
