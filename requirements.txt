@@ -3,3 +3,4 @@ pandas
 selenium
 google-genai
 webdriver_manager
+bs4
