@@ -1,7 +1,6 @@
 import os
 import time
 import base64
-import random
 import pandas as pd
 import streamlit as st
 from queue import Queue
@@ -13,7 +12,6 @@ from google.genai import types
 
 # ---- CONFIG ----
 
-MAX_URLS_PER_KEY = 3
 MAX_CONCURRENT_REQUESTS = 15
 API_KEYS = st.secrets["GEMINI"]["GEMINI_API_KEYS"]
 lock = Lock()
@@ -72,6 +70,8 @@ def process_url(task_queue, result_list, knowledge_text, key_rotation):
             task_queue.task_done()
             continue
 
+        driver = None  # Initialize driver to None
+
         try:
             driver = setup_selenium()
             driver.get(url)
@@ -107,29 +107,31 @@ Page Content:
             })
 
         finally:
-            driver.quit()
+            if driver:
+                driver.quit()
             task_queue.task_done()
 
-# ---- Streamlit Interface ----
+# ---- Streamlit App Interface ----
 
 def main():
     st.title("AI-Powered Regulatory Data Scraper")
 
-    uploaded_csv = st.file_uploader("Upload CSV (column name: 'url')", type=["csv"])
-    knowledge_file = st.file_uploader("Upload Knowledge Base Text File", type=["txt"])
+    uploaded_csv = st.file_uploader("Upload CSV (must contain column 'url')", type=["csv"])
+    knowledge_file = st.file_uploader("Upload Knowledge Base Text File (.txt)", type=["txt"])
 
     if uploaded_csv and knowledge_file:
         urls_df = pd.read_csv(uploaded_csv)
         knowledge_text = knowledge_file.read().decode("utf-8")
 
         if "url" not in urls_df.columns:
-            st.error("CSV must have a column named 'url'.")
+            st.error("CSV must contain a column named 'url'.")
             return
 
         urls = urls_df["url"].dropna().tolist()
         st.info(f"Total URLs to process: {len(urls)}")
 
         if st.button("Start Processing"):
+
             result_list = []
             task_queue = Queue()
 
